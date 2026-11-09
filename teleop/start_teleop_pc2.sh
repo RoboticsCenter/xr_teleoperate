@@ -89,5 +89,7 @@ echo "   Quest URL:  https://${IP:-<PC2 Wi-Fi IP>}:8012/?ws=wss://${IP:-<PC2 Wi-
 echo "   Order: wait for 'websocket is connected' -> take the start pose -> press r.  q = quit"
 echo
 cd "$TELEOP_DIR"
-exec "$TV_PY" teleop_hand_and_arm.py --arm=G1_29 --input-mode=controller $MOTION \
+# Unbuffered output avoids inheriting a locked stdout buffer when Vuer forks
+# while the background logging thread is writing to the SSH terminal.
+exec "$TV_PY" -u teleop_hand_and_arm.py --arm=G1_29 --input-mode=controller $MOTION \
   --network-interface=eth0 --img-server-ip=127.0.0.1 --headless
