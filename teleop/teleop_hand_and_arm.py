@@ -111,12 +111,9 @@ if __name__ == '__main__':
         if args.ipc:
             ipc_server = IPC_Server(on_press=on_press,get_state=get_state)
             ipc_server.start()
-        # sshkeyboard communication mode
-        else:
-            listen_keyboard_thread = threading.Thread(target=listen_keyboard, 
-                                                      kwargs={"on_press": on_press, "until": None, "sequential": False,}, 
-                                                      daemon=True)
-            listen_keyboard_thread.start()
+        # sshkeyboard mode is started further down, after every child process has been
+        # forked: a fork while the listener thread holds the stdin lock deadlocks the child
+        # (seen with televuer's Vuer process when running over SSH on PC2).
 
         # image client
         img_client = ImageClient(host=args.img_server_ip, request_bgr=True)
@@ -261,6 +258,13 @@ if __name__ == '__main__':
                                      frequency = args.frequency, 
                                      rerun_log = not args.headless)
 
+        # sshkeyboard communication mode (see note above: must start after all forks)
+        if not args.ipc:
+            listen_keyboard_thread = threading.Thread(target=listen_keyboard,
+                                                      kwargs={"on_press": on_press, "until": None, "sequential": False,},
+                                                      daemon=True)
+            listen_keyboard_thread.start()
+
         logger_mp.info("----------------------------------------------------------------")
         logger_mp.info("🟢  Press [r] to start syncing the robot with your movements.")
         if args.record:
@@ -352,7 +356,7 @@ if __name__ == '__main__':
                     STOP = True
                 # command robot to enter damping mode. soft emergency stop function
                 if tele_data.left_ctrl_thumbstick and tele_data.right_ctrl_thumbstick:
-                    loco_wrapper.Damp()
+                    loco_wrapper.Enter_Damp_Mode()
                 # https://github.com/unitreerobotics/xr_teleoperate/issues/135, control, limit velocity to within 0.3
                 loco_wrapper.Move(-tele_data.left_ctrl_thumbstickValue[1] * 0.3,
                                   -tele_data.left_ctrl_thumbstickValue[0] * 0.3,
