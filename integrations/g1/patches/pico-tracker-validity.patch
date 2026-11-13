@@ -1,0 +1,92 @@
+diff --git a/Assets/Scripts/TrackingData.cs b/Assets/Scripts/TrackingData.cs
+--- a/Assets/Scripts/TrackingData.cs
++++ b/Assets/Scripts/TrackingData.cs
+@@ -17,6 +17,7 @@
+         public static TrackingType TrackingTypeValue { get; private set; }
+ 
+         private JsonData _motionTrackingJson = new JsonData();
++        private long _motionSequence = 0;
+         private JsonData _bodyTrackingJson = new JsonData();
+         private JsonData _controllerDataJson = new JsonData();
+         private JsonData _leftControllerJson = new JsonData();
+@@ -135,7 +136,10 @@
+                     totalData.Remove("Body");
+             }
+ 
+-            if (TrackingTypeValue == TrackingType.Motion)
++            // Never retain Motion from a previous frame when mode/focus changed.
++            if (totalData.ContainsKey("Motion"))
++                totalData.Remove("Motion");
++            if (TrackingTypeValue == TrackingType.Motion && Application.isFocused)
+             {
+                 MotionTrackerMode trackingMode = PXR_MotionTracking.GetMotionTrackerMode();
+ 
+@@ -165,26 +169,25 @@
+             int ret = PXR_MotionTracking.GetMotionTrackerConnectStateWithSN(ref mtcs);
+ 
+             int len = 0;
+-            JsonData joints;
+-            if (_motionTrackingJson.ContainsKey("joints"))
+-            {
+-                joints = _motionTrackingJson["joints"];
+-            }
+-            else
+-            {
+-                joints = new JsonData();
+-                joints.SetJsonType(JsonType.Array);
+-                _motionTrackingJson["joints"] = joints;
+-            }
+-
+-
+-            if (ret == 0)
+-            {
+-                if (mtcs.trackersSN.Length > 0)
++            // A new array removes stale tails when one tracker disappears or fails.
++            JsonData joints = new JsonData();
++            joints.SetJsonType(JsonType.Array);
++            _motionTrackingJson["joints"] = joints;
++            _motionTrackingJson["sequence"] = ++_motionSequence;
++            _motionTrackingJson["timeStampNs"] = Utils.GetCurrentTimestamp();
++            _motionTrackingJson["timestampSource"] = "application_query";
++            _motionTrackingJson["connectStatus"] = ret;
++            bool countValid = ret == 0 && mtcs.trackersSN != null &&
++                mtcs.trackerSum >= 0 && mtcs.trackerSum <= mtcs.trackersSN.Length;
++            _motionTrackingJson["countValid"] = countValid;
++
++            if (countValid)
++            {
++                if (mtcs.trackerSum > 0)
+                 {
+                     for (int i = 0; i < mtcs.trackerSum; i++)
+                     {
+-                        string sn = mtcs.trackersSN[i].value.ToString().Trim();
++                        string sn = mtcs.trackersSN[i].value?.Trim() ?? string.Empty;
+                         if (!string.IsNullOrEmpty(sn))
+                         {
+                             //Obtain estimated position and rotation values for each somatosensory tracker
+@@ -197,17 +200,14 @@
+                             // If the position and rotation information are successfully obtained
+                             if (result == 0)
+                             {
+-                                JsonData joint;
+-                                if (len < joints.Count)
+-                                {
+-                                    joint = joints[len];
+-                                }
+-                                else
+-                                {
+-                                    joint = new JsonData();
+-                                    joints.Add(joint);
+-                                }
+-
++                                JsonData joint = new JsonData();
++                                joints.Add(joint);
++                                joint["confidence"] = (int)confidence;
++                                joint["trackingValid"] =
++                                    confidence == MotionTrackerConfidence.PXR_STATIC_ACCURATE ||
++                                    confidence == MotionTrackerConfidence.PXR_6DOF_ACCURATE;
++                                joint["queryTimeStampNs"] = Utils.GetCurrentTimestamp();
++                                joint["timestampSource"] = "application_query";
+                                 len++;
+                                 MotionTrackerLocation localLocation = locations.localLocation;
+ 

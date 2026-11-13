@@ -1,0 +1,226 @@
+<!doctype html>
+<!-- Adapted from the operator layout in kevin-roboticscenter/xr_teleoperate,
+     commit 053ba99af55c1d8ddc6b87918cb0fa234625886e,
+     integrations/h2/deployment/robot/quest_h2_web.py.
+     G1 session controls and rendering are provided by this project. -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f4f6f8">
+  <title>G1 遥操作控制台</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#controls">跳到遥操作控制</a>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">G1</span><div><p class="eyebrow">ROBOTICS CENTER</p><h1>遥操作控制台</h1></div></div>
+      <div class="connection"><span class="status-dot" id="connection-dot"></span><span id="connection-status">连接本机服务…</span><span class="separator">/</span><span class="mono" id="header-host">G1</span></div>
+    </header>
+
+    <div id="simulation-banner" class="banner simulation" hidden>界面模拟模式 · 本页操作不会连接或驱动机器人</div>
+    <div id="offline-banner" class="banner offline" role="alert" hidden>控制页面连接中断。机器人状态未知，不能据此判断已停止；请使用现场遥控器。</div>
+
+    <main>
+      <section class="control-bar" id="controls" aria-labelledby="session-title">
+        <div class="control-heading">
+          <div><p class="eyebrow">当前会话</p><h2 id="session-title" aria-live="polite">正在连接</h2><p id="session-detail" class="muted">读取会话和设备状态。</p></div>
+          <div class="session-limit"><strong id="session-clock">00:00</strong><span>会话运行时间</span></div>
+        </div>
+        <div class="input-settings" aria-label="遥操作输入选择">
+          <label for="arms-mode">跟随手臂<select id="arms-mode" disabled><option value="right">右臂</option><option value="left">左臂</option><option value="both">双臂</option></select></label>
+          <label for="arm-input-source">手臂输入<select id="arm-input-source" disabled><option value="trackers">腕部 Tracker</option><option value="controllers">PICO 手柄</option></select></label>
+          <label for="arm-reference-frame">参考坐标<select id="arm-reference-frame" aria-describedby="arm-reference-help" disabled><option value="world">固定方向（START）</option><option value="headset">跟随头显（位置与朝向）</option></select></label>
+          <label id="left-tracker-field" for="left-tracker">左腕 Tracker<select id="left-tracker" disabled><option value="">尚未选择</option></select></label>
+          <label id="right-tracker-field" for="right-tracker">右腕 Tracker<select id="right-tracker" disabled><option value="">尚未选择</option></select></label>
+          <button class="button compact" id="save-settings" disabled>保存选择</button>
+        </div>
+        <p id="arm-source-help" class="detail">腕部 Tracker 使用当前绑定；可在停止状态切换手臂输入。</p>
+        <p id="arm-reference-help" class="detail">当前使用 START 时的固定参考方向；跟随头显选项等待后台能力信息。</p>
+        <div class="input-check-row"><span id="settings-detail" class="detail">启动只读检查后，按左右腕分别选择 Tracker。</span><div class="button-group"><button class="button compact quiet" id="inputs-start" disabled>检查输入（只读）</button><button class="button compact quiet" id="inputs-stop" disabled>停止检查</button></div></div>
+        <div class="primary-actions">
+          <button class="button secondary" id="launch" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14v13H5V7Zm3 0V4h8v3M8 12h8M8 16h5"/></svg><span><span id="launch-label">准备遥操作</span><span id="launch-subtitle" class="button-subtitle">LAUNCH · 等待控制模式</span></span></button>
+          <button class="button primary" id="start" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 4 12 8-12 8V4Z"/></svg><span><span id="start-label">开始跟随</span><span id="start-subtitle" class="button-subtitle">START · 捕获姿态并跟随</span></span></button>
+          <button class="button danger" id="stop" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="1"/></svg><span>停止<span id="stop-subtitle" class="button-subtitle">STOP · 等待控制模式</span></span></button>
+        </div>
+        <div class="control-footnote"><span class="scope-label" id="scope-label">PICO Tracker + Wuji → G1 / BrainCo</span><span class="scope-label" id="control-mode-label">控制模式待确认</span><span id="control-note">读取当前控制接口和会话行为。</span></div>
+        <p id="locomotion-note" class="detail" hidden></p>
+        <p id="locomotion-reference" class="detail" hidden><a href="https://oss-global-cdn.unitree.com/static/5014b2b84df94951b1e2197081e02822.pdf" target="_blank" rel="noopener noreferrer">Unitree 官方遥控按键表（PDF，第 2 页）</a></p>
+        <div class="control-availability" aria-live="polite"><p id="launch-disabled-reason" class="detail" hidden></p><p id="start-disabled-reason" class="detail" hidden></p></div>
+        <p id="action-message" role="status" aria-live="polite" hidden></p>
+        <ol class="session-steps" aria-label="会话流程"><li data-step="prepare"><span>1</span>准备连接</li><li data-step="ready"><span>2</span>等待开始</li><li data-step="motion"><span>3</span>实时跟随</li><li data-step="finish"><span>4</span>结束记录</li></ol>
+      </section>
+
+      <section class="panel robot-connection-panel" id="robot-connection" aria-labelledby="robot-connection-heading">
+        <div class="panel-heading"><div><p class="eyebrow">G1 · READ-ONLY CONNECTION</p><h2 id="robot-connection-heading">连接 G1</h2></div><span id="robot-connection-badge" class="badge neutral">待检查</span></div>
+        <div class="robot-connection-toolbar"><div class="robot-address-pair"><div><span class="small-label">机器人 G1</span><strong id="robot-connection-robot-ip" class="mono">读取中</strong></div><span aria-hidden="true">↔</span><div><span class="small-label">本电脑</span><strong id="robot-connection-laptop-ip" class="mono">读取中</strong></div></div><div class="button-group"><button id="robot-connect" class="button compact primary" disabled>连接 G1</button><button id="robot-disconnect" class="button compact quiet" disabled>断开检查连接</button></div></div>
+        <p id="robot-connection-detail" class="detail" role="status" aria-live="polite">检查 G1 的只读 SSH 连接与身份，不启动机器人控制。</p>
+        <dl class="robot-connection-facts"><div><dt>设备名称</dt><dd id="robot-connection-hostname">—</dd></div><div><dt>最近响应</dt><dd id="robot-connection-last-seen">尚未检查</dd></div><div><dt>会话控制连接</dt><dd id="robot-control-connected">待检查</dd></div></dl>
+        <p id="robot-connection-addresses" class="detail mono" hidden></p><p id="robot-connection-error" class="inline-error" role="status" hidden></p><p id="robot-connection-action-message" class="hand-action-message" role="status" aria-live="polite" hidden></p>
+        <p class="detail robot-connection-note">此处仅检查连接；「断开检查连接」不停止正在运行的控制会话。手臂方向与距离的只读校准无需连接 G1，也无需 LAUNCH。</p>
+      </section>
+
+      <section class="panel pico-setup-panel" id="pico-setup" aria-labelledby="pico-setup-heading">
+        <div class="panel-heading"><div><p class="eyebrow">PICO · XROBOTOOLKIT</p><h2 id="pico-setup-heading">PICO 连接与手臂输入</h2></div><span id="pico-setup-badge" class="badge neutral">待检查</span></div>
+        <div class="pico-setup-toolbar"><div class="pico-host"><span class="small-label">头显中选择的电脑 IP</span><div><strong id="pico-host-ip" class="mono">读取中</strong><button id="pico-copy-ip" class="button compact quiet">复制 IP</button></div></div><div class="button-group"><button id="pico-setup-start" class="button compact primary" disabled>一键启动 PICO</button><button id="pico-setup-stop" class="button compact quiet" disabled>停止 PICO 接收</button></div></div>
+        <p id="pico-setup-detail" class="pico-setup-detail" role="status" aria-live="polite">正在读取下载页、接收服务和头显输入状态。</p>
+        <div class="pico-setup-columns">
+          <div class="pico-install-guide"><h3>在头显中完成连接</h3><ol><li>点击上方「一键启动 PICO」，准备下载页、XRoboToolkit 接收和 Tracker 读取。</li><li>在 PICO 浏览器打开 <span id="pico-install-url" class="mono">等待读取安装页地址</span>，安装 <strong>XRoboToolkit G1 Wrists</strong>，然后关闭原应用并打开新应用。</li><li id="pico-source-guide">选择 <strong>Object</strong> 两只 Tracker，启用 <strong>Head</strong>，选择本页显示的电脑 IP 并开启 <strong>Send</strong>。</li><li>在右侧确认 Head 和所选手臂输入，再使用下方方向、距离校准与遥操作控制。</li></ol><div class="pico-download-links"><a class="button compact quiet" id="pico-install-link" aria-disabled="true" target="_blank" rel="noopener noreferrer">打开安装页 ↗</a><a class="button compact quiet" id="pico-apk-link" aria-disabled="true" target="_blank" rel="noopener noreferrer" download>下载双 Tracker APK ↗</a><a class="button compact quiet" id="pico-distance-link" aria-disabled="true" target="_blank" rel="noopener noreferrer">PICO 位移参考页 ↗</a></div></div>
+          <div class="pico-live-status"><h3>当前状态</h3><div class="pico-service-grid">
+            <div class="pico-status-item"><div><span>APK 下载页</span><span id="pico-download-badge" class="badge neutral">待检查</span></div><p id="pico-download-detail" class="detail">等待下载服务状态</p></div>
+            <div class="pico-status-item"><div><span>XRoboToolkit 接收</span><span id="pico-receiver-badge" class="badge neutral">待检查</span></div><p id="pico-receiver-detail" class="detail">等待接收服务状态</p></div>
+            <div class="pico-status-item"><div><span>局域网 IP 广播</span><span id="pico-broadcast-badge" class="badge neutral">待检查</span></div><p id="pico-broadcast-detail" class="detail">以实际收到的广播为准</p></div>
+            <div class="pico-status-item"><div><span>PICO 姿态读取</span><span id="pico-reader-badge" class="badge neutral">待检查</span></div><p id="pico-reader-detail" class="detail">等待读取进程状态</p></div>
+          </div><div class="pico-input-summary"><div><span>头显连接</span><span id="pico-headset-badge" class="badge neutral">待检查</span></div><div><span>实时数据</span><span id="pico-stream-badge" class="badge neutral">待检查</span></div><div><span>Head 姿态</span><span id="pico-head-badge" class="badge neutral">待检查</span></div></div><div class="pico-wrist-grid"><div><div><strong id="pico-left-label">左腕</strong><span id="pico-left-badge" class="badge neutral">待检查</span></div><code id="pico-left-sn">等待 SN</code></div><div><div><strong id="pico-right-label">右腕</strong><span id="pico-right-badge" class="badge neutral">待检查</span></div><code id="pico-right-sn">等待 SN</code></div></div></div>
+        </div>
+        <div class="arm-input-check"><div><h3 id="pico-input-heading">Head / Tracker 输入检查</h3><p id="pico-arm-input-scope" class="detail">按顶部所选手臂检查所需输入。</p></div><button id="pico-arm-input-check" class="button compact" disabled>检查 Head / Tracker 输入</button><div class="arm-input-current"><span id="pico-arm-input-badge" class="badge neutral">待检查</span><span id="pico-arm-input-missing" class="detail">等待读取实时状态</span></div><p id="pico-arm-input-detail" class="detail">准备接收与读取后，持续按当前新鲜数据更新；不会启动机器人。</p></div>
+        <p id="pico-setup-action-message" class="hand-action-message" role="status" aria-live="polite" hidden></p>
+        <p class="detail pico-setup-note">一键启动仅准备 PICO 相关服务，不启动手套或机器人跟随。停止 PICO 接收会关闭 Tracker 读取和接收服务，下载页继续保留；手臂会话期间不可停止接收。</p>
+      </section>
+
+      <section class="panel arm-calibration-panel" id="arm-calibration" aria-labelledby="arm-calibration-heading">
+        <div class="panel-heading"><div><p class="eyebrow">PICO INPUT · DIRECTION & DISTANCE</p><h2 id="arm-calibration-heading">手臂方向与距离校准</h2></div><span id="arm-calibration-badge" class="badge neutral">只读采集</span></div>
+        <p class="calibration-intro">以你填写的实际移动距离和指定的前、左、上方向为校准依据。PICO 只记录输入，用于计算修正，不用它的距离判断你的动作是否达标。保存后用于下一次 START；采集前请停止全部手臂和机械手跟随。</p>
+        <div class="arm-input-check calibration-input-check"><div><h3>先检查当前所需输入</h3><p id="calibration-arm-input-scope" class="detail">使用顶部已保存的手臂和 Tracker 选择。</p></div><button id="calibration-arm-input-check" class="button compact" disabled>检查 Head / Tracker 输入</button><div class="arm-input-current"><span id="calibration-arm-input-badge" class="badge neutral">待检查</span><span id="calibration-arm-input-missing" class="detail">等待读取实时状态</span></div><p id="calibration-arm-input-detail" class="detail">只准备 PICO 接收与共享 Tracker 读取，无需连接 G1 或 LAUNCH。</p></div>
+        <div class="arm-calibration-setup">
+          <label for="arm-calibration-distance">每个方向的实际移动距离<div class="distance-input"><input id="arm-calibration-distance" type="number" value="20" min="3" max="100" step="any" inputmode="decimal" aria-describedby="arm-distance-help" disabled><span aria-hidden="true">cm</span></div></label>
+          <div><p id="arm-calibration-sides" class="arm-calibration-sides">等待读取所选腕部</p><p id="arm-distance-help" class="detail">填写你确认的实际距离（3–100 cm）。原点采集后距离固定；修改距离需重新采集。无需让 PICO 读数达到这个数值。</p></div>
+        </div>
+        <ol class="arm-calibration-guide"><li>面朝你希望机器人朝向的正前方，保持头部朝向和手腕朝向不变，记录舒适的原点。</li><li>所选手腕同向移动；前、左、上均按你指定的身体方向。<strong>每个方向都先返回原点，再移动你填写的实际距离。</strong>无需按 PICO 数值追加移动。</li></ol>
+        <p id="arm-calibration-instruction" class="arm-calibration-instruction" role="status" aria-live="polite">等待手臂校准服务。</p>
+        <div class="arm-capture-grid" aria-label="手臂校准采集步骤">
+          <div data-arm-stage="origin" class="arm-capture-step"><div><span class="step-number" aria-hidden="true">1</span><h3>原点</h3><span id="arm-stage-origin-status" class="detail">未采集</span></div><p class="detail">所选手腕回到舒适的中立位置</p><button id="arm-capture-origin" class="button compact quiet" disabled>采集原点</button></div>
+          <div data-arm-stage="forward" class="arm-capture-step"><div><span class="step-number" aria-hidden="true">2</span><h3>向前</h3><span id="arm-stage-forward-status" class="detail">未采集</span></div><p class="detail">从原点向身体正前方移动</p><button id="arm-capture-forward" class="button compact quiet" disabled>采集向前</button></div>
+          <div data-arm-stage="left" class="arm-capture-step"><div><span class="step-number" aria-hidden="true">3</span><h3>向左</h3><span id="arm-stage-left-status" class="detail">未采集</span></div><p class="detail">先回原点，再向身体左侧移动</p><button id="arm-capture-left" class="button compact quiet" disabled>采集向左</button></div>
+          <div data-arm-stage="up" class="arm-capture-step"><div><span class="step-number" aria-hidden="true">4</span><h3>向上</h3><span id="arm-stage-up-status" class="detail">未采集</span></div><p class="detail">先回原点，再竖直向上移动</p><button id="arm-capture-up" class="button compact quiet" disabled>采集向上</button></div>
+        </div>
+        <p id="arm-calibration-error" class="inline-error" role="status" hidden></p>
+        <div id="arm-calibration-candidate" class="arm-calibration-candidate" hidden><div class="calibration-step-heading"><h3>校准结果</h3><span id="arm-candidate-badge" class="badge caution">尚未保存</span></div><div id="arm-candidate-sides" class="arm-candidate-sides"></div></div>
+        <div class="arm-calibration-footer"><div class="button-group"><button id="arm-calibration-save" class="button compact primary" disabled>保存 · 下次 START 生效</button><button id="arm-calibration-reset" class="button compact quiet" disabled>重置本轮采集</button></div><p id="arm-calibration-saved" class="detail" hidden></p></div>
+        <p id="arm-calibration-action-message" class="hand-action-message" role="status" aria-live="polite" hidden></p>
+        <p class="detail arm-calibration-note">下次 START 仍会重新记录中立姿态；届时头部与身体保持相同的正前方向。方向和距离校准不能修复机械手腕装配偏差。</p>
+        <p id="arm-calibration-reference-note" class="detail">校准使用当前保存的参考坐标；不同参考模式分别保存校准。</p>
+      </section>
+
+      <section class="panel hands-panel" id="glove-calibration" aria-labelledby="hands-heading">
+        <div class="panel-heading"><div><p class="eyebrow">WUJI → BRAINCO REVO2</p><h2 id="hands-heading">手套校准与手指</h2></div><button id="gloves-refresh" class="button compact quiet" disabled>刷新校准状态</button></div>
+        <p class="calibration-intro">左右手分别完成「个人模型 → 开合采集 → 映射预览」。校准仅处理手套输入，不需要 LAUNCH，也不会启动机械手跟随。</p>
+        <p id="calibration-busy-note" class="calibration-busy-note" role="status" hidden></p>
+        <div class="hand-grid">
+          <article class="hand-control" aria-labelledby="left-hand-title">
+            <div class="hand-heading"><div><h3 id="left-hand-title">左手</h3><p id="left-glove-identity" class="detail mono">等待读取手套信息</p></div><span id="left-hand-badge" class="badge neutral">待检查</span></div>
+            <dl class="hand-state"><div><dt>手套输入</dt><dd id="left-hand-input">未检查</dd></div><div><dt>个人模型</dt><dd id="left-hand-model">未检查</dd></div><div><dt>开合映射</dt><dd id="left-hand-calibration">未检查</dd></div></dl>
+            <p id="left-hand-detail" class="detail">读取左手设备及原项目校准状态。</p>
+            <p id="left-hand-action-message" class="hand-action-message" role="status" aria-live="polite" hidden></p>
+            <section class="calibration-step" aria-labelledby="left-model-heading">
+              <div class="calibration-step-heading"><span class="step-number" aria-hidden="true">1</span><h4 id="left-model-heading">个人手型模型</h4><span id="left-model-badge" class="badge neutral">待检查</span></div>
+              <p class="detail">戴好左手手套，按提示完成手型动作。重新校准前会自动备份已有模型。</p>
+              <div class="calibration-actions"><button id="left-model-start" class="button compact" disabled>创建左手模型</button></div>
+              <div id="left-model-session" class="model-session" hidden>
+                <div class="calibration-progress-label"><strong id="left-model-phase">等待校准</strong><span id="left-model-progress-text" class="detail"></span></div>
+                <progress id="left-model-progress" max="100" aria-label="左手个人模型校准进度"></progress>
+                <p id="left-model-instruction" class="model-instruction" role="status" aria-live="polite"></p>
+                <p id="left-model-error" class="inline-error" role="status" hidden></p>
+                <div class="calibration-actions"><button id="left-model-continue" class="button compact primary" disabled hidden>姿势已准备，继续</button><button id="left-model-cancel" class="button compact quiet" disabled>取消模型校准</button></div>
+                <details class="model-log"><summary>查看校准输出</summary><pre id="left-model-log" tabindex="0" aria-label="左手校准程序输出">等待校准程序。</pre></details>
+              </div>
+              <p id="left-model-result" class="detail calibration-result" hidden></p>
+            </section>
+            <section class="calibration-step" aria-labelledby="left-mapping-heading">
+              <div class="calibration-step-heading"><span class="step-number" aria-hidden="true">2</span><h4 id="left-mapping-heading">读取手套 · 采集开合</h4></div>
+              <p class="detail">模型就绪后启动读取。自然张开手指并保持，采集张开；再握拳保持，采集握拳。</p>
+              <div class="calibration-actions"><button id="left-glove-input-start" class="button compact quiet" disabled>启动左手读取</button><button id="left-glove-input-stop" class="button compact quiet" disabled>停止读取</button></div>
+              <div class="capture-poses"><div><span>张开</span><strong id="left-open-state">本轮未采集</strong></div><div><span>握拳</span><strong id="left-closed-state">本轮未采集</strong></div></div>
+              <div class="hand-calibration-actions"><button id="left-hand-open" class="button compact quiet" disabled>采集左手张开</button><button id="left-hand-closed" class="button compact quiet" disabled>采集左手握拳</button></div>
+              <div id="left-capture-session" class="capture-session" hidden><progress id="left-capture-progress" max="100" aria-label="左手姿态采集进度"></progress><div class="capture-status-row"><p id="left-capture-status" class="detail" role="status" aria-live="polite"></p><button id="left-capture-cancel" class="button compact quiet" disabled>取消采集</button></div></div>
+              <p id="left-capture-result" class="detail calibration-result" role="status" hidden></p>
+            </section>
+            <section class="calibration-step mapping-preview" aria-labelledby="left-preview-heading">
+              <div class="calibration-step-heading"><span class="step-number" aria-hidden="true">3</span><h4 id="left-preview-heading">手指映射预览</h4><span class="badge neutral">未发送</span></div>
+              <p id="left-preview-detail" class="detail">模型、开合校准与有效输入就绪后显示映射，不向机械手发送目标。</p>
+              <div id="left-preview-channels" class="preview-channels" hidden></div>
+            </section>
+            <div class="hand-output-section"><p class="small-label">机械手跟随</p><label class="checkbox-label"><input id="left-hand-enabled" type="checkbox" disabled>随会话 START 启动左手</label><div class="hand-motion-actions"><button id="left-hand-start" class="button compact primary" disabled>开始左手跟随</button><button id="left-hand-stop" class="button compact danger" disabled>停止左手</button></div></div>
+          </article>
+          <article class="hand-control" aria-labelledby="right-hand-title">
+            <div class="hand-heading"><div><h3 id="right-hand-title">右手</h3><p id="right-glove-identity" class="detail mono">等待读取手套信息</p></div><span id="right-hand-badge" class="badge neutral">待检查</span></div>
+            <dl class="hand-state"><div><dt>手套输入</dt><dd id="right-hand-input">未检查</dd></div><div><dt>个人模型</dt><dd id="right-hand-model">未检查</dd></div><div><dt>开合映射</dt><dd id="right-hand-calibration">未检查</dd></div></dl>
+            <p id="right-hand-detail" class="detail">读取右手设备及原项目校准状态。</p>
+            <p id="right-hand-action-message" class="hand-action-message" role="status" aria-live="polite" hidden></p>
+            <section class="calibration-step" aria-labelledby="right-model-heading">
+              <div class="calibration-step-heading"><span class="step-number" aria-hidden="true">1</span><h4 id="right-model-heading">个人手型模型</h4><span id="right-model-badge" class="badge neutral">待检查</span></div>
+              <p class="detail">戴好右手手套，按提示完成手型动作。重新校准前会自动备份已有模型。</p>
+              <div class="calibration-actions"><button id="right-model-start" class="button compact" disabled>创建右手模型</button></div>
+              <div id="right-model-session" class="model-session" hidden>
+                <div class="calibration-progress-label"><strong id="right-model-phase">等待校准</strong><span id="right-model-progress-text" class="detail"></span></div>
+                <progress id="right-model-progress" max="100" aria-label="右手个人模型校准进度"></progress>
+                <p id="right-model-instruction" class="model-instruction" role="status" aria-live="polite"></p>
+                <p id="right-model-error" class="inline-error" role="status" hidden></p>
+                <div class="calibration-actions"><button id="right-model-continue" class="button compact primary" disabled hidden>姿势已准备，继续</button><button id="right-model-cancel" class="button compact quiet" disabled>取消模型校准</button></div>
+                <details class="model-log"><summary>查看校准输出</summary><pre id="right-model-log" tabindex="0" aria-label="右手校准程序输出">等待校准程序。</pre></details>
+              </div>
+              <p id="right-model-result" class="detail calibration-result" hidden></p>
+            </section>
+            <section class="calibration-step" aria-labelledby="right-mapping-heading">
+              <div class="calibration-step-heading"><span class="step-number" aria-hidden="true">2</span><h4 id="right-mapping-heading">读取手套 · 采集开合</h4></div>
+              <p class="detail">模型就绪后启动读取。自然张开手指并保持，采集张开；再握拳保持，采集握拳。</p>
+              <div class="calibration-actions"><button id="right-glove-input-start" class="button compact quiet" disabled>启动右手读取</button><button id="right-glove-input-stop" class="button compact quiet" disabled>停止读取</button></div>
+              <div class="capture-poses"><div><span>张开</span><strong id="right-open-state">本轮未采集</strong></div><div><span>握拳</span><strong id="right-closed-state">本轮未采集</strong></div></div>
+              <div class="hand-calibration-actions"><button id="right-hand-open" class="button compact quiet" disabled>采集右手张开</button><button id="right-hand-closed" class="button compact quiet" disabled>采集右手握拳</button></div>
+              <div id="right-capture-session" class="capture-session" hidden><progress id="right-capture-progress" max="100" aria-label="右手姿态采集进度"></progress><div class="capture-status-row"><p id="right-capture-status" class="detail" role="status" aria-live="polite"></p><button id="right-capture-cancel" class="button compact quiet" disabled>取消采集</button></div></div>
+              <p id="right-capture-result" class="detail calibration-result" role="status" hidden></p>
+            </section>
+            <section class="calibration-step mapping-preview" aria-labelledby="right-preview-heading">
+              <div class="calibration-step-heading"><span class="step-number" aria-hidden="true">3</span><h4 id="right-preview-heading">手指映射预览</h4><span class="badge neutral">未发送</span></div>
+              <p id="right-preview-detail" class="detail">模型、开合校准与有效输入就绪后显示映射，不向机械手发送目标。</p>
+              <div id="right-preview-channels" class="preview-channels" hidden></div>
+            </section>
+            <div class="hand-output-section"><p class="small-label">机械手跟随</p><label class="checkbox-label"><input id="right-hand-enabled" type="checkbox" disabled>随会话 START 启动右手</label><div class="hand-motion-actions"><button id="right-hand-start" class="button compact primary" disabled>开始右手跟随</button><button id="right-hand-stop" class="button compact danger" disabled>停止右手</button></div></div>
+          </article>
+        </div>
+        <p class="detail hands-note">完成校准后，可单独启动对应机械手。勾选「随会话 START」需点击顶部「保存选择」；顶部 STOP 停止全部跟随。</p>
+      </section>
+
+      <div class="workspace">
+        <div class="main-column">
+          <section class="panel camera-panel" aria-labelledby="camera-heading">
+            <div class="panel-heading"><div><p class="eyebrow">ROBOT VIEW</p><h2 id="camera-heading">机器人视角</h2></div><span id="camera-badge" class="badge neutral">未启动</span></div>
+            <div class="camera-view">
+              <img id="camera-image" alt="G1 RealSense 相机实时画面" hidden>
+              <div class="camera-placeholder" id="camera-placeholder"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M7 15h8l3-5h12l3 5h8v23H7V15Z"/><circle cx="24" cy="26" r="8"/></svg><strong id="camera-empty-title">画面尚未启动</strong><span id="camera-empty-detail">启动 G1 相机后，在这里查看画面。</span></div>
+              <span id="camera-live-label" class="live-label" hidden><i></i>实时画面</span>
+            </div>
+            <div class="camera-toolbar"><label class="checkbox-label"><input type="checkbox" id="pico-video">同时传到 PICO 头显</label><div class="button-group"><button class="button compact" id="camera-start" disabled>启动画面</button><button class="button compact quiet" id="camera-stop" disabled>停止画面</button></div></div>
+            <p id="camera-detail" class="detail">仅查看相机画面，不控制头部或双臂。</p>
+            <details class="help"><summary>在 PICO 里查看画面</summary><p>XRoboToolkit → Remote Vision → ZEDMINI → Listen，填写本电脑 IP。当前画面为单目双眼显示。</p><p>电脑地址：<span id="laptop-ip" class="mono">等待读取</span></p></details>
+          </section>
+
+          <section class="panel" aria-labelledby="outcome-heading">
+            <div class="panel-heading"><div><p class="eyebrow">SESSION</p><h2 id="outcome-heading">会话结果</h2></div><span id="session-mode" class="badge neutral">待启动</span></div>
+            <div class="metrics"><div><span>会话耗时</span><strong id="elapsed">—</strong></div><div><span>有效 IK 目标</span><strong id="accepted">—</strong></div><div><span>实际发送命令</span><strong id="writes">—</strong></div></div>
+            <p id="session-error" class="error-box" role="status" hidden></p>
+            <div class="run-path" id="run-path" hidden><div><span class="small-label">本次记录</span><code id="output-path"></code></div><button class="button compact quiet" id="copy-path">复制路径</button></div>
+            <details class="session-log"><summary>运行日志 <span id="log-count">0 条</span></summary><pre id="log" tabindex="0" aria-label="运行日志">启动会话后显示日志。</pre></details>
+          </section>
+        </div>
+
+        <aside class="side-column" aria-label="设备与输入">
+          <section class="panel device-panel" aria-labelledby="devices-heading">
+            <div class="panel-heading"><div><p class="eyebrow">CONNECTIONS</p><h2 id="devices-heading">设备与输入</h2></div></div>
+            <article class="device"><div class="device-title"><span class="device-icon" aria-hidden="true">G1</span><div><h3>机器人</h3><span class="mono" id="robot-address">读取中</span></div><span class="badge neutral" id="robot-badge">待检查</span></div><p id="robot-detail" class="detail">正在读取无线连接状态。</p><p class="detail" id="body-detail">本体反馈在会话启动时检查。</p></article>
+            <article class="device"><div class="device-title"><span class="device-icon pico-icon" aria-hidden="true">P</span><div><h3>PICO</h3><span>XRoboToolkit 输入服务</span></div><span class="badge neutral" id="pico-badge">待检查</span></div><p id="pico-detail" class="detail">正在读取服务状态。</p><div class="button-group"><button id="pico-start" class="button compact" disabled>一键启动 PICO</button><button id="pico-stop" class="button compact quiet" disabled>停止接收</button></div></article>
+            <article class="device"><div class="device-title"><span class="device-icon" aria-hidden="true">T</span><div><h3 id="tracker-title">腕部 Tracker</h3><span id="tracker-scope">独立腕部跟踪</span></div><span class="badge neutral" id="tracker-badge">待检查</span></div><p class="mono tracker-serial" id="tracker-sn">等待设备信息</p><p class="detail" id="tracker-detail">进入 XRoboToolkit 前台，选择 Object 并开启 Send。准备后保持起始姿态，再开始跟随。</p></article>
+            <article class="device"><div class="device-title"><span class="device-icon" aria-hidden="true">W</span><div><h3>Wuji · BrainCo</h3><span>手指读取与跟随</span></div><span class="badge neutral" id="hands-badge">待检查</span></div><p class="detail" id="hands-detail">正在读取手指链路状态。继续使用原 Wuji 读取和 BrainCo 手指映射。</p><div id="hands-sides" class="hands-sides" hidden></div></article>
+          </section>
+          <section class="panel scope-panel" aria-labelledby="scope-heading"><h2 id="scope-heading">当前运行范围</h2><ul id="scope-list"><li class="muted">等待读取可用功能。</li></ul><p class="detail">停止按钮结束当前跟随会话；页面状态不等于物理停机确认。</p><button class="button compact quiet" id="preview" hidden disabled>仅预演输入与目标</button></section>
+        </aside>
+      </div>
+
+      <section class="panel history-panel" aria-labelledby="history-heading"><div class="panel-heading"><div><p class="eyebrow">RECORDINGS</p><h2 id="history-heading">最近会话</h2></div><span class="detail">会话数据自动保存到本机</span></div><p id="history-empty" class="empty-history">还没有会话记录。预演和跟随的结果都会显示在这里。</p><div class="table-wrap" id="history-table-wrap" hidden><table><thead><tr><th scope="col">开始时间</th><th scope="col">类型</th><th scope="col">结果</th><th scope="col">命令数</th><th scope="col">记录目录</th></tr></thead><tbody id="history"></tbody></table></div></section>
+    </main>
+    <footer><span>G1 · PICO · Wuji / BrainCo</span><span id="last-update">等待状态更新</span></footer>
+  </div>
+</body>
+</html>

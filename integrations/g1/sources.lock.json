@@ -1,0 +1,48 @@
+{
+  "recorded_at_utc": "2026-11-11T23:19:27.272578+00:00",
+  "purpose": "Audit provenance only; upstream repositories are not installed by this file.",
+  "hand_source": {
+    "path": "/home/jack-xiang/branco-wuji-teleop/brainco-wuji-teleop",
+    "commit": "a66a48c949cb42957da4aa70d26e091e8c1b2c7d",
+    "worktree_status": "",
+    "sha256": {
+      "teleop_hand.py": "2f0813fd3d18167dd840f5382c7f33bc2cab2f179848e22204c382a47c2b34bc",
+      "wuji_bridge.py": "46f5f63e0c8d2398e4bebb692f6f79b097c1f898710f58b086f257283afde1b4",
+      "teleop/retarget.py": "24c78eae6e42fe8beeadcbafc429f08a8e3e02ad9b66559c65db1032c82cebf5",
+      "teleop/config.py": "65a12882a159d837d38e5c64ce145c6475a380dc31d2290a595ee675143fde3e",
+      "teleop/timing.py": "b715e90631f59f2ef09dbbf241ae8975d997486e6bdd15b4c4c7e7a28a9f47f5",
+      "teleop/live.py": "9fc302083455aa1379a9406cd3c674e8ebb3c2d5f1e68db4b79a7dc1cd9eeffe",
+      "settings.example.json": "fbff4920e9114e51027419d5d8d61455dab51c8ce218ec0cb45da5ede75bca3e",
+      "calibration.json": "66d78425d387c668d7c55fe719ec920818c012faf06bc691b488bdd28e82deca"
+    }
+  },
+  "audited_upstream": {
+    "BrainCoTech/unitree-g1-brainco-hand": [
+      "e93b3693e3dad5dd1bedb7f2a5999b5990aa0b3a"
+    ],
+    "Pico-Developer/XRoboToolkit": [
+      "8aa00cc86a5e029d04275bf794ed9a68a5b902c0"
+    ],
+    "XR-Robotics/XRoboToolkit-PC-Service-Pybind": [
+      "8941e1dbbf4313fe83846f82984eaa8c992690bf"
+    ],
+    "XR-Robotics/XRoboToolkit-Teleop-Sample-Python": [
+      "79e5cb8a56e3455515ce1b476e993c764ec58739"
+    ],
+    "XR-Robotics/XRoboToolkit-Unity-Client": [
+      "cdc53166b0bf412efae71046c6a225eb5091605f"
+    ],
+    "unitreerobotics/brainco_hand_service": [
+      "d71996b6999edb2f838a3dca3d9621429a2ef966"
+    ],
+    "unitreerobotics/unitree_sdk2_python": [
+      "814556d15970dd2ecf1c9984e845ca02ab07e206"
+    ],
+    "unitreerobotics/xr_teleoperate": [
+      "817fb00c63cde15e5f24a0f8fa08e1e33ed89d3b"
+    ],
+    "unitreerobotics/unifolm-world-model-action": [
+      "3e198de68de55f93f24b3ad623dd499390aaee45"
+    ]
+  }
+}

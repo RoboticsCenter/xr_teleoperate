@@ -1,0 +1,588 @@
+diff --git a/include/command_gate.h b/include/command_gate.h
+new file mode 100644
+index 0000000..ddc9573
+--- /dev/null
++++ b/include/command_gate.h
+@@ -0,0 +1,100 @@
++#pragma once
++#include <array>
++#include <chrono>
++#include <cmath>
++#include <cstdint>
++#include <mutex>
++#include <stdexcept>
++#include <vector>
++namespace brainco_gate {
++using Clock = std::chrono::steady_clock;
++using Six = std::array<uint16_t, 6>;
++enum class Fault { None, InvalidCommand, CommandExpired, FeedbackUnavailable, Shutdown };
++enum class Action { None, Command, HoldAttempt };
++inline const char* name(Fault f) {
++    switch (f) {
++        case Fault::None: return "none";
++        case Fault::InvalidCommand: return "invalid-command";
++        case Fault::CommandExpired: return "command-expired";
++        case Fault::FeedbackUnavailable: return "feedback-unavailable";
++        case Fault::Shutdown: return "shutdown";
++    }
++    return "unknown";
++}
++struct Feedback {
++    Six positions{};
++    std::array<int16_t, 6> speeds{}, currents{};
++    Clock::time_point read_started{};
++    bool valid{false};
++};
++// Send runs under submit's mutex: invalid callbacks cannot race a checked write.
++class CommandGate {
++public:
++    CommandGate(bool enabled, std::chrono::milliseconds timeout,
++                std::chrono::milliseconds feedback_age)
++        : enabled_(enabled), timeout_(timeout), feedback_age_(feedback_age) {
++        if (timeout.count() <= 0 || feedback_age.count() <= 0)
++            throw std::invalid_argument("deadlines must be positive");
++    }
++    void submit(const std::vector<float>& q, const std::vector<float>& dq,
++                Clock::time_point received) {
++        std::lock_guard<std::mutex> lock(mutex_);
++        if (!enabled_ || fault_ != Fault::None) return;
++        // A callback arriving after a missed deadline must not revive the stream.
++        if (seen_command_ && (received < received_ || received - received_ >= timeout_)) {
++            fault_ = Fault::CommandExpired;
++            return;
++        }
++        if (q.size() != 6 || dq.size() != 6) { fault_ = Fault::InvalidCommand; return; }
++        for (unsigned i = 0; i < 6; ++i) {
++            if (!std::isfinite(q[i]) || !std::isfinite(dq[i]) || q[i] < 0 || q[i] > 1 ||
++                dq[i] < 0.001f || dq[i] > 1) { fault_ = Fault::InvalidCommand; return; }
++        }
++        for (unsigned i = 0; i < 6; ++i) {
++            positions_[i] = static_cast<uint16_t>(std::lround(q[i] * 1000.f));
++            speeds_[i] = static_cast<uint16_t>(std::lround(dq[i] * 1000.f));
++        }
++        received_ = received;
++        seen_command_ = true;
++    }
++    void shutdown() {
++        std::lock_guard<std::mutex> lock(mutex_);
++        if (enabled_ && fault_ == Fault::None) fault_ = Fault::Shutdown;
++    }
++    Fault fault() const { std::lock_guard<std::mutex> lock(mutex_); return fault_; }
++    template<class Send>
++    Action tick(Clock::time_point now, const Feedback& feedback, Send send) {
++        std::lock_guard<std::mutex> lock(mutex_);
++        if (!enabled_) return Action::None;
++        bool fresh = feedback.valid && now >= feedback.read_started &&
++                     now - feedback.read_started <= feedback_age_;
++        for (auto value : feedback.positions) fresh = fresh && value <= 1000;
++        if (fault_ == Fault::None && !fresh) fault_ = Fault::FeedbackUnavailable;
++        if (fault_ == Fault::None && seen_command_ &&
++            (now < received_ || now - received_ >= timeout_)) fault_ = Fault::CommandExpired;
++        if (fault_ != Fault::None) {
++            // Decide once; recovered feedback must not trigger a deferred hold.
++            if (!handled_fault_) {
++                handled_fault_ = true;
++                if (issued_command_ && fresh) {
++                    Six speed{}; speed.fill(100);
++                    send(feedback.positions, speed);
++                    return Action::HoldAttempt;
++                }
++            }
++            return Action::None;
++        }
++        if (!seen_command_) return Action::None;
++        issued_command_ = true; // attempt, never an acknowledgment
++        send(positions_, speeds_);
++        return Action::Command;
++    }
++private:
++    bool enabled_, seen_command_{false}, issued_command_{false}, handled_fault_{false};
++    std::chrono::milliseconds timeout_, feedback_age_;
++    Six positions_{}, speeds_{};
++    Clock::time_point received_{};
++    Fault fault_{Fault::None};
++    mutable std::mutex mutex_;
++};
++} // namespace brainco_gate
+diff --git a/include/param.h b/include/param.h
+index ebaf4b1..11205df 100644
+--- a/include/param.h
++++ b/include/param.h
+@@ -9,6 +9,7 @@
+ #include <spdlog/spdlog.h>
+ #include <memory>
+ #include <iomanip>
++#include <stdexcept>
+ 
+ 
+ namespace param
+@@ -23,12 +24,24 @@ namespace param
+         desc.add_options()
+             ("help,h", "produce help message")
+             ("version,v", "show version")
+-            ("network_interface,n", po::value<std::string>()->default_value(""), "dds network interface");
++            ("network_interface,n", po::value<std::string>()->default_value(""), "dds network interface")
++            ("enable-commands", po::bool_switch()->default_value(false),
++             "enable position commands AND one measured-position hold attempt on fault/exit")
++            ("command-timeout-ms", po::value<unsigned>()->default_value(200),
++             "local DDS receive age limit; expiry latches command disable until restart")
++            ("feedback-max-age-ms", po::value<unsigned>()->default_value(100),
++             "maximum elapsed time since start of a successful normalized feedback read");
+ 
+         po::variables_map vm;
+         po::store(po::parse_command_line(argc, argv, desc), vm);
+         po::notify(vm);
+ 
++        for (const char* key : {"command-timeout-ms", "feedback-max-age-ms"}) {
++            const auto value = vm[key].as<unsigned>();
++            if (value < 10 || value > 5000)
++                throw std::invalid_argument(std::string(key) + " must be 10..5000");
++        }
++
+         if (vm.count("help"))
+         {
+             std::cout << desc << std::endl;
+@@ -51,4 +64,4 @@ namespace param
+     }
+ 
+ 
+-}
+\ No newline at end of file
++}
+diff --git a/main.cpp b/main.cpp
+index 1c5229e..aa677f1 100644
+--- a/main.cpp
++++ b/main.cpp
+@@ -1,183 +1,184 @@
+ #include "stark-sdk.h"
+ #include "param.h"
+-
+-#include "dds/Publisher.h"
+-#include "dds/Subscription.h"
++#include "command_gate.h"
++#include <unitree/robot/channel/channel_publisher.hpp>
++#include <unitree/robot/channel/channel_subscriber.hpp>
+ #include <unitree/idl/go2/MotorCmds_.hpp>
+ #include <unitree/idl/go2/MotorStates_.hpp>
+-#include <unitree/common/thread/recurrent_thread.hpp>
+-
+-#include <iostream>
+-#include <csignal>
+-#include <chrono>
+-#include <thread>
+ #include <algorithm>
+ #include <atomic>
++#include <csignal>
+ #include <filesystem>
++#include <thread>
+ 
+-std::atomic<bool> running(true);
++using brainco_gate::Clock;
++using brainco_gate::Feedback;
++using brainco_gate::CommandGate;
++using brainco_gate::Six;
++using Cmd = unitree_go::msg::dds_::MotorCmds_;
++using State = unitree_go::msg::dds_::MotorStates_;
++std::atomic<bool> running(true), worker_failed(false);
+ void signal_handler(int) { running = false; }
+-
+-// Brainco Hand ID
+-constexpr uint8_t L_id = 0x7e;
+-constexpr uint8_t R_id = 0x7f;
++constexpr uint8_t L_id = 0x7e, R_id = 0x7f;
+ constexpr uint32_t baudrate = 460800;
++struct Options {
++    bool enable_commands;
++    std::chrono::milliseconds command_timeout, feedback_age;
++};
++struct HandConnection {
++    DeviceHandler* handle{nullptr};
++    CDeviceInfo* info{nullptr};
++    std::string port;
++};
+ 
+-// ------------------ Utility ------------------
+ std::vector<std::string> getAvailableSerialPorts() {
+     std::vector<std::string> ports;
+     for (const auto& entry : std::filesystem::directory_iterator("/dev")) {
+-        std::string path = entry.path().string();
+-
+-        if (path.rfind("/dev/ttyUSB", 0) == 0) ports.push_back(path);
+-        if (path.rfind("/dev/ttyHAND", 0) == 0) ports.push_back(path);
+-        if (path.rfind("/dev/ttyUN", 0) == 0) ports.push_back(path);
++        const auto path = entry.path().string();
++        if (path.rfind("/dev/ttyUSB", 0) == 0 || path.rfind("/dev/ttyHAND", 0) == 0 ||
++            path.rfind("/dev/ttyUN", 0) == 0) ports.push_back(path);
+     }
+-    spdlog::info("Available Serial Ports: {}", fmt::join(ports, ", "));
++    std::sort(ports.begin(), ports.end());
+     return ports;
+ }
+-
+-
+-// Hand connection struct
+-struct HandConnection {
+-    DeviceHandler* handle{nullptr};
+-    CDeviceInfo* info{nullptr};
+-    std::string port;
+-};
+-
+-// Try connecting a hand on a given port
+ HandConnection try_connect_hand(const std::string& port, uint8_t slave_id) {
+-    HandConnection ret;
+-    ret.port = port;
+-
+-    DeviceHandler* handle = modbus_open(port.c_str(), baudrate);
+-    if (!handle) {
+-        spdlog::warn("Failed to open {} at {} baud", port, baudrate);
+-        return ret;
+-    }
+-
+-    CDeviceInfo* info = stark_get_device_info(handle, slave_id);
+-    if (!info) {
+-        spdlog::warn("Failed to get device info from {} port", port);
+-        modbus_close(handle);
+-        return ret;
+-    }
+-
+-    spdlog::info("Hand hardware_type: {}", info->hardware_type);
+-    spdlog::info("Hand sku_type: {}", info->sku_type);
+-    spdlog::info("Hand firmware_version: {}", info->firmware_version);
+-    spdlog::info("Hand serial_number: {}", info->serial_number);
+-
+-    stark_set_finger_unit_mode(handle, slave_id, FINGER_UNIT_MODE_NORMALIZED);
+-
+-    ret.handle = handle;
+-    ret.info = info;
+-    return ret;
++    auto* handle = modbus_open(port.c_str(), baudrate);
++    if (!handle) return {};
++    // Match the validated FTDI probe: allow port reconfiguration to settle
++    // before the first Modbus request. This changes no device registers.
++    std::this_thread::sleep_for(std::chrono::milliseconds(150));
++    auto* info = stark_get_device_info(handle, slave_id);
++    if (!info) { modbus_close(handle); return {}; }
++    spdlog::info("port={} id={} sku={} firmware={} serial={}", port, slave_id,
++                 info->sku_type, info->firmware_version, info->serial_number);
++    // No unit-mode or other device configuration writes, in either mode.
++    return {handle, info, port};
+ }
+-
+-// Find a hand from available ports given allowed SKUs
+-HandConnection find_hand(std::vector<std::string>& ports, uint8_t slave_id, const std::vector<SkuType>& allowed_skus, const std::string& hand_name) {
++HandConnection find_hand(std::vector<std::string>& ports, uint8_t slave_id,
++                         const std::vector<SkuType>& allowed, const std::string& side) {
+     for (const auto& port : ports) {
+-        spdlog::info("Trying port for {} hand from {} port", hand_name, port);
+-        auto conn = try_connect_hand(port, slave_id);
+-        if (!conn.handle) continue;
+-
+-        if (std::find(allowed_skus.begin(), allowed_skus.end(), conn.info->sku_type) != allowed_skus.end()) {
+-            spdlog::info("{} hand bound to {} port", hand_name, port);
++        auto connection = try_connect_hand(port, slave_id);
++        if (!connection.handle) continue;
++        if (std::find(allowed.begin(), allowed.end(), connection.info->sku_type) != allowed.end()) {
++            spdlog::info("{} bound to {}", side, port);
+             ports.erase(std::remove(ports.begin(), ports.end(), port), ports.end());
+-            return conn;
+-        } else {
+-            modbus_close(conn.handle);
+-            free_device_info(conn.info);
+-            spdlog::warn("Port {} is not {} hand (sku {}). Closed.", port, hand_name, (int)conn.info->sku_type);
++            return connection;
+         }
++        // Log before freeing info: fixes the upstream mismatch-path UAF.
++        spdlog::warn("port {} has unexpected {} sku={}", port, side, connection.info->sku_type);
++        free_device_info(connection.info);
++        modbus_close(connection.handle);
+     }
+     return {};
+ }
+-
+-// ------------------ Hand Update Loop ------------------
+-void update_finger(DeviceHandler* handle, uint8_t slave_id,
+-                   unitree::robot::SubscriptionBase<unitree_go::msg::dds_::MotorCmds_>* lowcmd,
+-                   unitree::robot::RealTimePublisher<unitree_go::msg::dds_::MotorStates_>* lowstate,
+-                   const std::string& ns) {
+-    uint16_t positions[6], speeds[6];
+-
+-    for (int i = 0; i < 6; ++i) {
+-        positions[i] = static_cast<uint16_t>(std::clamp(lowcmd->msg_.cmds()[i].q(), 0.f, 1.f) * 1000.f);
+-        speeds[i]    = static_cast<uint16_t>(std::clamp(lowcmd->msg_.cmds()[i].dq(), 0.f, 1.f) * 1000.f);
++Feedback read_feedback(DeviceHandler* handle, uint8_t id, std::chrono::milliseconds max_age) {
++    Feedback result; // failed read never reuses cached samples
++    result.read_started = Clock::now();
++    uint16_t unit = 0xffff, registers[24]{};
++    if (stark_read_holding_registers(handle, id, 937, 1, &unit) != 0 || unit != 0) return result;
++    if (stark_read_input_registers(handle, id, 2000, 24, registers) != 0) return result;
++    if (Clock::now() - result.read_started > max_age) return result;
++    for (unsigned i = 0; i < 6; ++i) {
++        const int speed = registers[i + 6] < 32768 ? registers[i + 6] : int(registers[i + 6]) - 65536;
++        const int current = registers[i + 12] < 32768 ? registers[i + 12] : int(registers[i + 12]) - 65536;
++        if (registers[i] > 1000 || speed < -1000 || speed > 1000 ||
++            current < -1000 || current > 1000 || registers[i + 18] > 3) return result;
++        result.positions[i] = registers[i];
++        result.speeds[i] = static_cast<int16_t>(speed);
++        result.currents[i] = static_cast<int16_t>(current);
+     }
+-
+-    // Write commands
+-    stark_set_finger_positions_and_speeds(handle, slave_id, positions, speeds, 6);
+-
+-    // Read status
+-    auto status = stark_get_motor_status(handle, slave_id);
+-    if (!status) return;
+-
+-    for (int i = 0; i < 6; ++i) {
+-        lowstate->msg_.states()[i].q()        = status->positions[i] / 1000.f;
+-        lowstate->msg_.states()[i].dq()       = status->speeds[i] / 1000.f;
+-        lowstate->msg_.states()[i].tau_est()  = status->currents[i] / 1000.f;
+-
+-        // if (status->currents[i] > 800) {
+-        //     spdlog::warn("{} finger {} over current: {} mA", ns, i, status->currents[i]);
+-        // }
+-    }
+-    lowstate->unlockAndPublish();
+-    free_motor_status_data(status);
++    result.valid = true;
++    return result;
+ }
+-
+-// Worker thread for each hand
+-void hand_worker(DeviceHandler* handle, uint8_t slave_id, const std::string& ns) {
+-    spdlog::info("🚀 Starting worker for {} (slave {})", ns, (int)slave_id);
+-
+-    // DDS setup
+-    auto lowcmd   = std::make_shared<unitree::robot::SubscriptionBase<unitree_go::msg::dds_::MotorCmds_>>("rt/brainco/" + ns + "/cmd");
+-    lowcmd->msg_.cmds().resize(6);
+-    for (auto& finger : lowcmd->msg_.cmds()) finger.dq() = 1.;
+-
+-    auto lowstate = std::make_unique<unitree::robot::RealTimePublisher<unitree_go::msg::dds_::MotorStates_>>("rt/brainco/" + ns + "/state");
+-    lowstate->msg_.states().resize(6);
+-
+-    while (running) {
+-        auto start_time = std::chrono::high_resolution_clock::now();
+-        update_finger(handle, slave_id, lowcmd.get(), lowstate.get(), ns);
+-        auto elapsed_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - start_time).count();
+-        int sleep_us = 10000 - static_cast<int>(elapsed_us); // 100Hz
+-        if (sleep_us > 0) std::this_thread::sleep_for(std::chrono::microseconds(sleep_us));
++void hand_worker(DeviceHandler* handle, uint8_t id, const std::string& side, Options options) {
++    try {
++        const auto first = read_feedback(handle, id, options.feedback_age);
++        if (!first.valid) {
++            spdlog::error("{} initial feedback invalid/non-normalized/late; no command subscriber or writes", side);
++            worker_failed = true;
++            modbus_close(handle);
++            return;
++        }
++        auto gate = std::make_shared<CommandGate>(options.enable_commands, options.command_timeout, options.feedback_age);
++        unitree::robot::ChannelPublisher<State> publisher("rt/brainco/" + side + "/state");
++        publisher.InitChannel();
++        std::shared_ptr<unitree::robot::ChannelSubscriber<Cmd>> subscriber;
++        if (options.enable_commands) {
++            subscriber = std::make_shared<unitree::robot::ChannelSubscriber<Cmd>>("rt/brainco/" + side + "/cmd");
++            subscriber->InitChannel([gate](const void* raw) {
++                const auto received = Clock::now();
++                const auto& message = *static_cast<const Cmd*>(raw);
++                std::vector<float> q, dq;
++                if (message.cmds().size() == 6) {
++                    for (const auto& motor : message.cmds()) { q.push_back(motor.q()); dq.push_back(motor.dq()); }
++                }
++                gate->submit(q, dq, received); // no fabricated initial zero command
++            });
++        }
++        auto send = [handle, id](const Six& positions, const Six& speeds) {
++            // Native void call is an attempt, not an acknowledgment or physical stop.
++            stark_set_finger_positions_and_speeds(handle, id, positions.data(), speeds.data(), 6);
++        };
++        auto last_fault = brainco_gate::Fault::None;
++        while (running) {
++            const auto start = Clock::now();
++            const auto feedback = read_feedback(handle, id, options.feedback_age);
++            if (feedback.valid) {
++                State message;
++                message.states().resize(6);
++                for (unsigned i = 0; i < 6; ++i) {
++                    message.states()[i].q() = feedback.positions[i] / 1000.f;
++                    message.states()[i].dq() = feedback.speeds[i] / 1000.f;
++                    // Normalized current, not physical torque in N*m.
++                    message.states()[i].tau_est() = feedback.currents[i] / 1000.f;
++                }
++                publisher.Write(message, 0);
++            }
++            if (!running && options.enable_commands) gate->shutdown();
++            const auto action = gate->tick(Clock::now(), feedback, send);
++            const auto fault = gate->fault();
++            if (fault != last_fault) {
++                spdlog::error("{} gate latched: {}; restart required; physical stop NOT confirmed", side, brainco_gate::name(fault));
++                last_fault = fault;
++            }
++            if (action == brainco_gate::Action::HoldAttempt)
++                spdlog::warn("{} issued one measured-position hold ATTEMPT (motion command)", side);
++            std::this_thread::sleep_until(start + std::chrono::milliseconds(10));
++        }
++        if (subscriber) subscriber->CloseChannel();
++        if (options.enable_commands) {
++            gate->shutdown();
++            const auto final_feedback = read_feedback(handle, id, options.feedback_age);
++            if (gate->tick(Clock::now(), final_feedback, send) == brainco_gate::Action::HoldAttempt)
++                spdlog::warn("{} exit issued hold ATTEMPT; physical stop NOT confirmed", side);
++        }
++        publisher.CloseChannel();
++    } catch (const std::exception& error) {
++        worker_failed = true;
++        spdlog::error("{} worker failed: {}; no speculative hold; physical stop NOT confirmed", side, error.what());
+     }
+-
+-    spdlog::info("Worker for {} exiting (closing handle)", ns);
+-    if (handle) modbus_close(handle);
++    modbus_close(handle);
+ }
+-
+ int main(int argc, char** argv) {
+     signal(SIGINT, signal_handler);
+-
++    signal(SIGTERM, signal_handler);
+     auto vm = param::helper(argc, argv);
++    const Options options{vm["enable-commands"].as<bool>(),
++        std::chrono::milliseconds(vm["command-timeout-ms"].as<unsigned>()),
++        std::chrono::milliseconds(vm["feedback-max-age-ms"].as<unsigned>())};
++    spdlog::warn("Mode: {}", options.enable_commands ? "COMMANDS ENABLED, including fault/exit hold attempts" : "FEEDBACK ONLY, no command subscriber or device writes");
+     unitree::robot::ChannelFactory::Instance()->Init(0, vm["network_interface"].as<std::string>());
+-
+     init_logging(LogLevel::LOG_LEVEL_ERROR);
+-
+-    std::vector<std::string> available_ports = getAvailableSerialPorts();
+-    if (available_ports.empty()) {
+-        spdlog::warn("No ttyUSB serial ports found.");
+-        return 0;
+-    }
+-
+-    HandConnection left_conn  = find_hand(available_ports, L_id, {SkuType::SKU_TYPE_SMALL_LEFT, SkuType::SKU_TYPE_MEDIUM_LEFT}, "left");
+-    HandConnection right_conn = find_hand(available_ports, R_id, {SkuType::SKU_TYPE_SMALL_RIGHT, SkuType::SKU_TYPE_MEDIUM_RIGHT}, "right");
+-
+-    std::thread left_thread, right_thread;
+-    if (left_conn.handle)  left_thread  = std::thread(hand_worker, left_conn.handle, L_id, "left");
+-    if (right_conn.handle) right_thread = std::thread(hand_worker, right_conn.handle, R_id, "right");
+-
+-    if (left_thread.joinable())  left_thread.join();
+-    if (right_thread.joinable()) right_thread.join();
+-
+-    if (left_conn.info)  free_device_info(left_conn.info);
+-    if (right_conn.info) free_device_info(right_conn.info);
+-
+-    spdlog::info("exit.");
+-    return 0;
+-}
+\ No newline at end of file
++    auto ports = getAvailableSerialPorts();
++    auto left = find_hand(ports, L_id, {SkuType::SKU_TYPE_SMALL_LEFT, SkuType::SKU_TYPE_MEDIUM_LEFT}, "left");
++    auto right = find_hand(ports, R_id, {SkuType::SKU_TYPE_SMALL_RIGHT, SkuType::SKU_TYPE_MEDIUM_RIGHT}, "right");
++    if (!left.handle && !right.handle) { spdlog::error("No matching hand; no retry loop"); return 1; }
++    std::thread lt, rt;
++    if (left.handle) lt = std::thread(hand_worker, left.handle, L_id, "left", options);
++    if (right.handle) rt = std::thread(hand_worker, right.handle, R_id, "right", options);
++    if (lt.joinable()) lt.join();
++    if (rt.joinable()) rt.join();
++    if (left.info) free_device_info(left.info);
++    if (right.info) free_device_info(right.info);
++    return worker_failed ? 2 : 0;
++}
+diff --git a/test/command_gate_test.cpp b/test/command_gate_test.cpp
+new file mode 100644
+index 0000000..cf3231d
+--- /dev/null
++++ b/test/command_gate_test.cpp
+@@ -0,0 +1,92 @@
++#include "command_gate.h"
++#include <iostream>
++#include <limits>
++#include <stdexcept>
++using namespace brainco_gate;
++using namespace std::chrono_literals;
++void check(bool good) { if (!good) throw std::runtime_error("policy assertion failed"); }
++int main() {
++    const auto t = Clock::time_point{} + 10s;
++    Feedback feedback; feedback.valid = true; feedback.read_started = t;
++    feedback.positions.fill(321);
++    const std::vector<float> q(6, .4f), dq(6, .5f);
++    unsigned writes = 0;
++    Six last_q{}, last_dq{};
++    auto send = [&](const Six& p, const Six& s) { ++writes; last_q = p; last_dq = s; };
++    {
++        CommandGate gate(false, 200ms, 100ms);
++        gate.submit(q, dq, t); gate.tick(t, feedback, send);
++        gate.submit({}, {}, t); gate.shutdown(); gate.tick(t, feedback, send);
++        check(writes == 0);
++    }
++    {
++        CommandGate gate(true, 200ms, 100ms);
++        check(gate.tick(t, feedback, send) == Action::None);
++        gate.shutdown(); check(gate.tick(t, feedback, send) == Action::None);
++        check(writes == 0);
++    }
++    {
++        CommandGate gate(true, 200ms, 100ms);
++        gate.submit(q, dq, t);
++        check(gate.tick(t, feedback, send) == Action::Command);
++        check(last_q[0] == 400 && last_dq[0] == 500);
++        auto next = feedback; next.read_started = t + 200ms;
++        check(gate.tick(t + 200ms, next, send) == Action::HoldAttempt);
++        check(gate.fault() == Fault::CommandExpired && last_q[0] == 321 && last_dq[0] == 100);
++        const auto count = writes;
++        gate.submit(q, dq, t + 201ms); gate.shutdown();
++        check(gate.tick(t + 201ms, next, send) == Action::None && count == writes);
++    }
++    for (unsigned bad = 0; bad < 6; ++bad) {
++        CommandGate gate(true, 200ms, 100ms);
++        auto p = q, s = dq;
++        if (bad == 0) p.resize(5);
++        if (bad == 1) p[0] = std::numeric_limits<float>::quiet_NaN();
++        if (bad == 2) p[0] = 1.01f;
++        if (bad == 3) s[0] = 0;
++        if (bad == 4) s[0] = std::numeric_limits<float>::infinity();
++        if (bad == 5) s.resize(7);
++        const auto count = writes;
++        gate.submit(p, s, t); gate.submit(q, dq, t);
++        check(gate.fault() == Fault::InvalidCommand);
++        check(gate.tick(t, feedback, send) == Action::None && count == writes);
++    }
++    for (bool stale : {false, true}) {
++        CommandGate gate(true, 200ms, 100ms);
++        gate.submit(q, dq, t); gate.tick(t, feedback, send);
++        auto broken = feedback; broken.valid = stale;
++        const auto count = writes;
++        check(gate.tick(t + 101ms, broken, send) == Action::None);
++        check(gate.fault() == Fault::FeedbackUnavailable && count == writes);
++        auto recovered = feedback; recovered.read_started = t + 102ms;
++        gate.submit(q, dq, t + 102ms);
++        check(gate.tick(t + 102ms, recovered, send) == Action::None && count == writes);
++    }
++    {
++        CommandGate gate(true, 200ms, 100ms);
++        gate.submit(q, dq, t); gate.tick(t, feedback, send);
++        gate.submit({}, {}, t + 1ms);
++        check(gate.tick(t + 1ms, feedback, send) == Action::HoldAttempt);
++        check(gate.fault() == Fault::InvalidCommand);
++        check(gate.tick(t + 2ms, feedback, send) == Action::None);
++    }
++    {
++        CommandGate gate(true, 200ms, 100ms);
++        gate.submit(q, dq, t); gate.tick(t, feedback, send);
++        gate.shutdown();
++        check(gate.tick(t, feedback, send) == Action::HoldAttempt);
++        check(gate.tick(t, feedback, send) == Action::None);
++    }
++    // Missing tick during a blocking SDK read: late callback cannot hide expiry.
++    for (auto gap : {200ms, 500ms, -1ms}) {
++        CommandGate gate(true, 200ms, 100ms);
++        gate.submit(q, dq, t); gate.tick(t, feedback, send);
++        gate.submit(q, dq, t + gap);
++        check(gate.fault() == Fault::CommandExpired);
++        auto fresh = feedback; fresh.read_started = t + 600ms;
++        check(gate.tick(t + 600ms, fresh, send) == Action::HoldAttempt);
++        gate.submit(q, dq, t + 601ms);
++        check(gate.tick(t + 601ms, fresh, send) == Action::None);
++    }
++    std::cout << "command gate: all policy assertions passed\n";
++}

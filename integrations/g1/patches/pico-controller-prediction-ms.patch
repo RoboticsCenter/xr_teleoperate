@@ -1,0 +1,23 @@
+diff --git a/Assets/Scripts/TrackingData.cs b/Assets/Scripts/TrackingData.cs
+--- a/Assets/Scripts/TrackingData.cs
++++ b/Assets/Scripts/TrackingData.cs
+@@ -60,9 +60,8 @@
+         public void Get(ref JsonData totalData)
+         {
+             //sensor
+-            double predictTime = PXR_Enterprise.GetPredictedDisplayTime(); //毫秒
+-            predictTime = predictTime * 1000;
+-            totalData["predictTime"] = predictTime; //微秒，对应camera录制中帧插入的时间戳
++            double predictTimeMs = PXR_Enterprise.GetPredictedDisplayTime(); //毫秒
++            totalData["predictTime"] = predictTimeMs * 1000; //微秒，对应camera录制中帧插入的时间戳
+             totalData["appState"] = _stateData;
+             _stateData["focus"] = Application.isFocused;
+             if (HeadOn)
+@@ -86,6 +85,6 @@
+             if (ControllerOn)
+             {
+-                JsonData controller = GetLeftRightControllerJsonData(predictTime);
++                JsonData controller = GetLeftRightControllerJsonData(predictTimeMs);
+                 totalData["Controller"] = controller;
+             }
+             else

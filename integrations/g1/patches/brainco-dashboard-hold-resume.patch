@@ -1,0 +1,153 @@
+--- a/include/command_gate.h
++++ b/include/command_gate.h
+@@ -27,7 +27,7 @@
+     Clock::time_point read_started{};
+     bool valid{false};
+ };
+-// Send runs under submit's mutex: invalid callbacks cannot race a checked write.
++// Dashboard lifecycle: explicit enable, hold last target, per-side feedback pause/resume.
+ class CommandGate {
+ public:
+     CommandGate(bool enabled, std::chrono::milliseconds timeout,
+@@ -39,16 +39,11 @@
+     void submit(const std::vector<float>& q, const std::vector<float>& dq,
+                 Clock::time_point received) {
+         std::lock_guard<std::mutex> lock(mutex_);
+-        if (!enabled_ || fault_ != Fault::None) return;
+-        // A callback arriving after a missed deadline must not revive the stream.
+-        if (seen_command_ && (received < received_ || received - received_ >= timeout_)) {
+-            fault_ = Fault::CommandExpired;
+-            return;
+-        }
+-        if (q.size() != 6 || dq.size() != 6) { fault_ = Fault::InvalidCommand; return; }
++        if (!enabled_ || fault_ == Fault::Shutdown) return;
++        if (q.size() != 6 || dq.size() != 6) { return; }
+         for (unsigned i = 0; i < 6; ++i) {
+             if (!std::isfinite(q[i]) || !std::isfinite(dq[i]) || q[i] < 0 || q[i] > 1 ||
+-                dq[i] < 0.001f || dq[i] > 1) { fault_ = Fault::InvalidCommand; return; }
++                dq[i] < 0.001f || dq[i] > 1) { return; }
+         }
+         for (unsigned i = 0; i < 6; ++i) {
+             positions_[i] = static_cast<uint16_t>(std::lround(q[i] * 1000.f));
+@@ -69,9 +64,9 @@
+         bool fresh = feedback.valid && now >= feedback.read_started &&
+                      now - feedback.read_started <= feedback_age_;
+         for (auto value : feedback.positions) fresh = fresh && value <= 1000;
+-        if (fault_ == Fault::None && !fresh) fault_ = Fault::FeedbackUnavailable;
+-        if (fault_ == Fault::None && seen_command_ &&
+-            (now < received_ || now - received_ >= timeout_)) fault_ = Fault::CommandExpired;
++        // Input interruption holds the previous target. Bad hardware feedback
++        // pauses only this hand; the next valid feedback resumes without latch.
++        if (!fresh) return Action::None;
+         if (fault_ != Fault::None) {
+             // Decide once; recovered feedback must not trigger a deferred hold.
+             if (!handled_fault_) {
+--- a/main.cpp
++++ b/main.cpp
+@@ -41,18 +41,54 @@
+     std::sort(ports.begin(), ports.end());
+     return ports;
+ }
++bool startup_wait(unsigned milliseconds) {
++    for (unsigned waited = 0; running && waited < milliseconds; waited += 25)
++        std::this_thread::sleep_for(std::chrono::milliseconds(std::min(25u, milliseconds - waited)));
++    return running;
++}
+ HandConnection try_connect_hand(const std::string& port, uint8_t slave_id) {
++    const char* side = slave_id == L_id ? "left" : slave_id == R_id ? "right" : "unknown";
++    if (!running) return {};
+     auto* handle = modbus_open(port.c_str(), baudrate);
+-    if (!handle) return {};
+-    // Match the validated FTDI probe: allow port reconfiguration to settle
+-    // before the first Modbus request. This changes no device registers.
+-    std::this_thread::sleep_for(std::chrono::milliseconds(150));
++    if (!handle) {
++        spdlog::warn("{} startup open_failed port={} id={}", side, port, slave_id);
++        return {};
++    }
++    // Retain the validated 150ms FTDI settle; cancellation never advances to
++    // another device read or a command worker. This changes no registers.
++    if (!startup_wait(150)) { modbus_close(handle); return {}; }
+     auto* info = stark_get_device_info(handle, slave_id);
+-    if (!info) { modbus_close(handle); return {}; }
++    if (!info) {
++        spdlog::warn("{} startup identity_read_failed port={} id={}", side, port, slave_id);
++        modbus_close(handle);
++        return {};
++    }
++    if (!running) { free_device_info(info); modbus_close(handle); return {}; }
+     spdlog::info("port={} id={} sku={} firmware={} serial={}", port, slave_id,
+                  info->sku_type, info->firmware_version, info->serial_number);
+     // No unit-mode or other device configuration writes, in either mode.
+     return {handle, info, port};
++}
++HandConnection connect_known_hand(const std::string& port, uint8_t slave_id, const char* side) {
++    // Only an initial failed identification is retried. Successful connections
++    // are retained; no alternate endpoint, ID, baud or register write is used.
++    constexpr unsigned attempts = 3;
++    for (unsigned attempt = 1; running && attempt <= attempts; ++attempt) {
++        spdlog::info("{} startup attempt={}/{} port={} id={}", side, attempt, attempts, port, slave_id);
++        auto connection = try_connect_hand(port, slave_id);
++        if (connection.handle) return connection;
++        if (!running || (attempt < attempts && !startup_wait(250))) break;
++    }
++    if (running)
++        spdlog::error("{} startup unavailable port={} id={}; no worker for this side", side, port, slave_id);
++    else
++        spdlog::info("{} startup cancelled port={} id={}; no worker started", side, port, slave_id);
++    return {};
++}
++void close_startup_connection(HandConnection& connection) {
++    if (connection.info) free_device_info(connection.info);
++    if (connection.handle) modbus_close(connection.handle);
++    connection = {};
+ }
+ HandConnection find_hand(std::vector<std::string>& ports, uint8_t slave_id,
+                          const std::vector<SkuType>& allowed, const std::string& side) {
+@@ -82,7 +118,7 @@
+         const int speed = registers[i + 6] < 32768 ? registers[i + 6] : int(registers[i + 6]) - 65536;
+         const int current = registers[i + 12] < 32768 ? registers[i + 12] : int(registers[i + 12]) - 65536;
+         if (registers[i] > 1000 || speed < -1000 || speed > 1000 ||
+-            current < -1000 || current > 1000 || registers[i + 18] > 3) return result;
++            current < -1000 || current > 1000 || registers[i + 18] > 2) return result;
+         result.positions[i] = registers[i];
+         result.speeds[i] = static_cast<int16_t>(speed);
+         result.currents[i] = static_cast<int16_t>(current);
+@@ -138,7 +174,7 @@
+             const auto action = gate->tick(Clock::now(), feedback, send);
+             const auto fault = gate->fault();
+             if (fault != last_fault) {
+-                spdlog::error("{} gate latched: {}; restart required; physical stop NOT confirmed", side, brainco_gate::name(fault));
++                spdlog::error("{} gate state: {}; physical stop NOT confirmed", side, brainco_gate::name(fault));
+                 last_fault = fault;
+             }
+             if (action == brainco_gate::Action::HoldAttempt)
+@@ -169,9 +205,25 @@
+     spdlog::warn("Mode: {}", options.enable_commands ? "COMMANDS ENABLED, including fault/exit hold attempts" : "FEEDBACK ONLY, no command subscriber or device writes");
+     unitree::robot::ChannelFactory::Instance()->Init(0, vm["network_interface"].as<std::string>());
+     init_logging(LogLevel::LOG_LEVEL_ERROR);
+-    auto ports = getAvailableSerialPorts();
+-    auto left = find_hand(ports, L_id, {SkuType::SKU_TYPE_SMALL_LEFT, SkuType::SKU_TYPE_MEDIUM_LEFT}, "left");
+-    auto right = find_hand(ports, R_id, {SkuType::SKU_TYPE_SMALL_RIGHT, SkuType::SKU_TYPE_MEDIUM_RIGHT}, "right");
++    auto left = connect_known_hand("/dev/serial/by-id/usb-FTDI_Dual_RS232-HS-if01-port0", L_id, "left");
++    auto right = connect_known_hand("/dev/serial/by-id/usb-FTDI_Dual_RS232-HS-if00-port0", R_id, "right");
++    if (!running) {
++        close_startup_connection(left);
++        close_startup_connection(right);
++        return 0;
++    }
++    const bool left_ok = !left.info || (std::string(left.info->serial_number) == "BCXTL2204J2600021" &&
++        (left.info->sku_type == SkuType::SKU_TYPE_SMALL_LEFT || left.info->sku_type == SkuType::SKU_TYPE_MEDIUM_LEFT));
++    const bool right_ok = !right.info || (std::string(right.info->serial_number) == "BCXTR2362J2500015" &&
++        (right.info->sku_type == SkuType::SKU_TYPE_SMALL_RIGHT || right.info->sku_type == SkuType::SKU_TYPE_MEDIUM_RIGHT));
++    if (!left_ok || !right_ok) {
++        spdlog::error("Unexpected hand identity; no command worker started");
++        if (left.info) free_device_info(left.info);
++        if (right.info) free_device_info(right.info);
++        if (left.handle) modbus_close(left.handle);
++        if (right.handle) modbus_close(right.handle);
++        return 3;
++    }
+     if (!left.handle && !right.handle) { spdlog::error("No matching hand; no retry loop"); return 1; }
+     std::thread lt, rt;
+     if (left.handle) lt = std::thread(hand_worker, left.handle, L_id, "left", options);

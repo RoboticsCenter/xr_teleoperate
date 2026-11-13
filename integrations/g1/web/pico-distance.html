@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>PICO 未校准位移参考 · G1</title>
+  <link rel="stylesheet" href="/distance.css">
+  <script src="/distance.js" defer></script>
+</head>
+<body>
+  <main class="distance-shell">
+    <header class="topbar">
+      <div><p class="eyebrow">G1 / PICO · RAW TRACKER REFERENCE</p><h1>PICO 位移参考</h1></div>
+      <div class="header-actions"><button id="zero" class="primary" type="button" disabled>设置测量起点</button><button id="fullscreen" class="quiet" type="button" hidden>全屏查看</button></div>
+    </header>
+      <div class="measurement-context"><p>电脑校准步骤 <strong id="current-stage">—</strong></p><p>你填写的实际距离 <strong><span id="target-cm">—</span> cm</strong></p></div>
+      <p class="scope-note">以下是未校准的 PICO 参考数值，不是动作目标或合格标准。校准采用你填写的实际距离和指定方向，无需让读数与它们一致。</p>
+    <div class="wrist-grid">
+      <section id="left-card" class="wrist-card waiting" aria-labelledby="left-heading">
+        <div class="card-heading"><h2 id="left-heading">左腕</h2><span id="left-status" class="badge caution">等待读取</span></div>
+        <p class="distance-label">PICO 原始直线位移 · 未校准</p>
+        <p class="distance-number"><span id="left-displacement">—</span><span class="unit">cm</span></p>
+        <dl class="axes"><div><dt>向前 <small>＋</small></dt><dd><span id="left-forward">—</span><small>cm</small></dd></div><div><dt>向左 <small>＋</small></dt><dd><span id="left-left">—</span><small>cm</small></dd></div><div><dt>向上 <small>＋</small></dt><dd><span id="left-up">—</span><small>cm</small></dd></div></dl>
+        <p id="left-sn" class="serial">Tracker：—</p>
+      </section>
+      <section id="right-card" class="wrist-card waiting" aria-labelledby="right-heading">
+        <div class="card-heading"><h2 id="right-heading">右腕</h2><span id="right-status" class="badge caution">等待读取</span></div>
+        <p class="distance-label">PICO 原始直线位移 · 未校准</p>
+        <p class="distance-number"><span id="right-displacement">—</span><span class="unit">cm</span></p>
+        <dl class="axes"><div><dt>向前 <small>＋</small></dt><dd><span id="right-forward">—</span><small>cm</small></dd></div><div><dt>向左 <small>＋</small></dt><dd><span id="right-left">—</span><small>cm</small></dd></div><div><dt>向上 <small>＋</small></dt><dd><span id="right-up">—</span><small>cm</small></dd></div></dl>
+        <p id="right-sn" class="serial">Tracker：—</p>
+      </section>
+    </div>
+    <section class="measurement-status" aria-labelledby="status-heading">
+      <div class="status-heading"><h2 id="status-heading">PICO 原始输入状态</h2><span id="status-badge" class="badge caution">连接中</span></div>
+      <p id="status-detail" class="status-detail" role="status">正在连接电脑上的 Tracker 距离服务。</p>
+      <p id="calibration-error" class="error" hidden></p>
+      <div class="zero-row"><p id="origin-label">尚未设置独立的测量起点</p></div>
+      <div class="deferred-zero"><button id="arm-zero" class="quiet" type="button" disabled>等待输入后归零</button><button id="cancel-zero" class="quiet" type="button" disabled hidden>取消等待归零</button><p>先保持测量起始姿势，再点击排队；下一组有效输入将作为起点。若当前没有数据，返回 XRoboToolkit 并保持该姿势。</p></div>
+      <p id="action-message" role="status" hidden></p>
+    </section>
+    <section class="guide" aria-labelledby="guide-heading">
+      <h2 id="guide-heading">与电脑端使用同一个身体姿势</h2>
+      <ol><li>如需观察 PICO 输入，先在电脑端采集校准原点；保持该姿势，再点击本页「设置测量起点」。两处起点分别记录，本页归零不影响电脑校准。</li><li>按你指定的方向和填写的实际距离移动手腕。每个方向都先回到同一原点，保持头部面向正前方、手腕朝向不变；无需等待读数达到某个值。</li><li>分量正数对应原始坐标的前／左／上，负数对应后／右／下；坐标以起点时头部朝向冻结。这些未校准分量不用于验证你实际移动的方向。</li></ol>
+      <p class="ruler-note"><strong>以你确认的实际距离和方向为准。</strong>PICO 数值仅供观察原始输入，不作为校准目标或通过条件。若需核对实际距离，请使用实体尺；PICO 读数不能替代实体尺。</p>
+      <p class="scope-note">本页仅显示输入并设置独立测量起点，不修改电脑校准结果，也不控制机器人。数据中断或起点失效时，数值自动隐藏。</p>
+      <p class="scope-note">若打开头显浏览器后数据停止，可使用上方「等待输入后归零」，再回到 XRoboToolkit，保持应用前台并通过下方 RemoteVision 查看距离。浏览器与跟踪应用能否同时运行，需以头显实际状态为准。</p>
+    </section>
+    <section class="guide remote-guide" aria-labelledby="remote-heading">
+      <h2 id="remote-heading">在 XRoboToolkit 内查看距离</h2>
+      <p>保持 XRoboToolkit 前台，启用 Head / Object / Send。在 <strong>RemoteVision</strong> 中选择电脑 <strong id="distance-laptop-ip">读取中</strong>，设置为 <strong>ZEDMINI / H.264 / 2560 × 720</strong>。</p>
+      <p id="remote-vision-detail" class="scope-note" role="status">正在读取应用内距离画面状态。</p>
+      <p class="scope-note">画面显示同一组未校准的 PICO 位移参考，不是相机影像或动作目标。<a href="/distance.jpg" target="_blank" rel="noopener noreferrer">查看参考画面预览 ↗</a></p>
+    </section>
+    <footer><span>电脑 <span id="distance-footer-ip">读取中</span></span><a href="/">PICO 安装页</a></footer>
+    <noscript><p class="ruler-note">请启用浏览器 JavaScript 以显示实时距离。</p></noscript>
+  </main>
+</body>
+</html>

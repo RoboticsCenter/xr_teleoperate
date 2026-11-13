@@ -1,0 +1,35 @@
+{
+  "repository": "https://github.com/kevin-roboticscenter/xr_teleoperate",
+  "branch": "h2/pico-wuji-head-camera",
+  "commit": "053ba99af55c1d8ddc6b87918cb0fa234625886e",
+  "files": {
+    "head_camera/pico_video.py": "2f512c7d56743d9e5f62a33d6eba28dae5f850728e1d7f41caf94845321b25a4",
+    "pico_tracker/geometry.py": "d733f87c5104f56edfc73c5d855ed93c5322699894f6598c8aa57ece3bd653a5",
+    "pico_tracker/input.py": "4c3681e16dacaea4991d997b8d099ba22df9bb165cfa226c597517a429dec4c1",
+    "pico_tracker/receive.py": "926ca905ff5bd9f15f28db7540868feee06745935ed466af99c22a15f4baf09a",
+    "pico_tracker/stream_trackers.py": "3c36f985f22ef018727628d43b71c494e19be89b0ba371dc0667a71964a7d7e3",
+    "quest_auto_record.py": "12bc876cc6e70e8f2c3badb540e4ae446e60f77d69e4691efbb22656f653258d",
+    "config/pico_tracker.example.json": "515cd5ab1f895548a2c0dcf940c18c5dc15fb90b97cc7d97dec5bc2c6e292dac",
+    "tests/test_head_video.py": "ccef316bcb4b77cdafe14b461b3b6e3bc967adda643598356acfb67bf72078e0",
+    "tests/test_pico_tracker.py": "099497996fddc71aa3b626b2530c9ef7fb2a983a49bca3f4c749c4a75fd9fc37",
+    "tests/test_auto_recording.py": "202800c56efa1399b7276718d88694aaf565467bad3c9736b5a8e2b6ff4b0e82",
+    "teleop/robot_control/robot_arm.py": "4b1d72c8aac227fa775d271a0a3c8bf22a108bed2661f9ea97bed3f4c0fdc800",
+    "teleop/robot_control/robot_arm_ik.py": "f395b3ef868ed3c854654b08b33f74ee73f57dbb7c0e8f20440a7f788115a085",
+    "teleop/robot_control/dds_utils.py": "4b103efda2374983d4bec165a22a220ddcf1b954a75db5021bee790ce1fa7e87",
+    "teleop/utils/weighted_moving_filter.py": "48d914f37de405351d327b9712a36c013f8375d550258fecbdd37997e526308b"
+  },
+  "runtime": {
+    "repository": "https://github.com/unitreerobotics/xr_teleoperate",
+    "commit": "39b79bca34b7547b21edad3fe3e642bb5cac7147",
+    "origin": "runtime referenced by integrations/h2 on selected h2/pico-wuji-head-camera branch",
+    "files": [
+      "teleop/robot_control/robot_arm.py",
+      "teleop/robot_control/robot_arm_ik.py",
+      "teleop/robot_control/dds_utils.py",
+      "teleop/utils/weighted_moving_filter.py"
+    ]
+  },
+  "source_path": "integrations/h2/",
+  "license_source_path": "LICENSE",
+  "license_sha256": "63762ccebdb836cf2bae6b1ae0de526e7499dbf45e554c790ebc45942cce3e36"
+}

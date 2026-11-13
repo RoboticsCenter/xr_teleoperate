@@ -1,0 +1,6 @@
+# Versions installed in the validated laptop dashboard environment.
+# Native PICO, Wuji, G1 IK, and robot DDS dependencies use separate environments.
+numpy==2.5.4
+pexpect==4.9.0
+av==19.0.2
+Pillow==13.0.0

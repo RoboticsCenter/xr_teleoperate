@@ -1,0 +1,10 @@
+tools/
+keys/
+decoded/
+dex-inspection/
+work/
+logs/
+*.apk
+*.idsig
+__pycache__/
+tests/__pycache__/

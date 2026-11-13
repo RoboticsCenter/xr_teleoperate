@@ -1,0 +1,9 @@
+{
+  "arms_mode": "both",
+  "arm_input_source": "trackers",
+  "arm_reference_frame": "world",
+  "hands_enabled": {
+    "left": false,
+    "right": false
+  }
+}
